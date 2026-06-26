@@ -1,10 +1,33 @@
 import cron from "node-cron";
-import { getConfig, validateConfig } from "./config.js";
+import { buildScheduleCronExpressions, getConfig, validateConfig } from "./config.js";
 import { runNotifierCheck } from "./notifier.js";
 
 async function main() {
   const config = getConfig();
   validateConfig(config);
+
+  const scheduledExpressions = buildScheduleCronExpressions(config.scheduleTimes);
+
+  if (scheduledExpressions.length > 0) {
+    for (const cronExpression of scheduledExpressions) {
+      cron.schedule(
+        cronExpression,
+        async () => {
+          try {
+            await runNotifierCheck(config);
+          } catch (error) {
+            console.error("Scheduled check failed:", error.response?.data || error.message);
+          }
+        },
+        { timezone: config.scheduleTimezone }
+      );
+    }
+
+    console.log(
+      `Notifier scheduled daily at ${config.scheduleTimes.join(", ")} (${config.scheduleTimezone}). Press Ctrl+C to stop.`
+    );
+    return;
+  }
 
   await runNotifierCheck(config);
 

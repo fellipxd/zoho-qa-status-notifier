@@ -7,6 +7,8 @@ export function getConfig() {
   const discoveryPortalIds = parseDiscoveryPortalIds(process.env);
   const projectBoards = monitorAllProjects ? [] : parseProjectBoards(process.env);
   const targetStatusNames = parseTargetStatusNames(process.env);
+  const scheduleTimes = parseScheduleTimes(process.env);
+  const projectCliqMentions = parseProjectCliqMentions(process.env);
 
   const config = {
     zohoAccountsBaseUrl: process.env.ZOHO_ACCOUNTS_BASE_URL || "https://accounts.zoho.com",
@@ -17,8 +19,12 @@ export function getConfig() {
     monitorAllProjects,
     discoveryPortalIds,
     projectBoards,
+    projectCliqMentions,
     targetStatusNames,
     targetStatusName: targetStatusNames[0],
+    scheduleTimes,
+    scheduleTimezone:
+      process.env.SCHEDULE_TIMEZONE || process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     pollIntervalMinutes: Number.parseInt(process.env.POLL_INTERVAL_MINUTES || "5", 10),
     cliqWebhookUrl: process.env.CLIQ_WEBHOOK_URL,
     notifiedStateFile: process.env.NOTIFIED_STATE_FILE || "./data/notified.json",
@@ -44,8 +50,9 @@ export function validateConfig(config) {
     ? validateDiscoveryPortalIds(config.discoveryPortalIds)
     : validateProjectBoards(config.projectBoards);
   const statusErrors = validateTargetStatuses(config.targetStatusNames);
+  const projectCliqMentionErrors = validateProjectCliqMentions(config.projectCliqMentions);
 
-  if (missing.length > 0 || boardErrors.length > 0 || statusErrors.length > 0) {
+  if (missing.length > 0 || boardErrors.length > 0 || statusErrors.length > 0 || projectCliqMentionErrors.length > 0) {
     const messages = [];
 
     if (missing.length > 0) {
@@ -60,12 +67,48 @@ export function validateConfig(config) {
       messages.push(`Invalid target status configuration: ${statusErrors.join("; ")}`);
     }
 
+    if (projectCliqMentionErrors.length > 0) {
+      messages.push(`Invalid project Cliq mention configuration: ${projectCliqMentionErrors.join("; ")}`);
+    }
+
     throw new Error(messages.join(". "));
+  }
+
+  if (config.scheduleTimes.length > 0) {
+    validateScheduleTimes(config.scheduleTimes);
+    return;
   }
 
   if (!Number.isInteger(config.pollIntervalMinutes) || config.pollIntervalMinutes < 1) {
     throw new Error("POLL_INTERVAL_MINUTES must be a positive integer.");
   }
+}
+
+export function buildScheduleCronExpressions(scheduleTimes) {
+  return scheduleTimes.map((time) => {
+    const [hour, minute] = time.split(":");
+    return `${minute} ${hour} * * *`;
+  });
+}
+
+export function getCliqMentionForBoard(config, board) {
+  const mapping = config.projectCliqMentions.find(
+    (entry) => entry.portalId === board.portalId && entry.projectId === board.projectId
+  );
+
+  if (!mapping) {
+    return null;
+  }
+
+  if (mapping.cliqUserZohoId) {
+    return `{@${mapping.cliqUserZohoId}}`;
+  }
+
+  if (mapping.cliqUserEmail) {
+    return `{@${mapping.cliqUserEmail}}`;
+  }
+
+  return null;
 }
 
 export function parseTargetStatusNames(env) {
@@ -111,6 +154,32 @@ export function parseProjectBoards(env) {
   );
 }
 
+export function parseScheduleTimes(env) {
+  return splitList(env.SCHEDULE_TIMES || env.SCHEDULE_TIME);
+}
+
+export function parseProjectCliqMentions(env) {
+  const raw = env.PROJECT_CLIQ_MENTIONS;
+
+  if (!raw) {
+    return [];
+  }
+
+  let parsed;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`PROJECT_CLIQ_MENTIONS must be valid JSON: ${error.message}`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("PROJECT_CLIQ_MENTIONS must be a JSON array.");
+  }
+
+  return parsed.map((entry, index) => normalizeProjectCliqMention(entry, index));
+}
+
 function normalizeProjectBoard(board, index) {
   const portalId = String(board.portalId || board.portal_id || board.portal || "").trim();
   const projectId = String(board.projectId || board.project_id || board.id || "").trim();
@@ -120,6 +189,21 @@ function normalizeProjectBoard(board, index) {
     name,
     portalId,
     projectId
+  };
+}
+
+function normalizeProjectCliqMention(entry, index) {
+  const portalId = String(entry.portalId || entry.portal_id || entry.portal || "").trim();
+  const projectId = String(entry.projectId || entry.project_id || entry.id || "").trim();
+  const cliqUserZohoId = String(entry.cliqUserZohoId || entry.zohoId || entry.userZohoId || "").trim();
+  const cliqUserEmail = String(entry.cliqUserEmail || entry.email || entry.userEmail || "").trim();
+
+  return {
+    portalId,
+    projectId,
+    cliqUserZohoId,
+    cliqUserEmail,
+    label: String(entry.label || entry.name || `mapping ${index + 1}`).trim()
   };
 }
 
@@ -171,6 +255,65 @@ function validateTargetStatuses(targetStatusNames) {
   }
 
   return errors;
+}
+
+function validateProjectCliqMentions(projectCliqMentions) {
+  if (!Array.isArray(projectCliqMentions) || projectCliqMentions.length === 0) {
+    return [];
+  }
+
+  const errors = [];
+  const seen = new Set();
+
+  for (const mapping of projectCliqMentions) {
+    const label = mapping.label || `${mapping.portalId}:${mapping.projectId}`;
+
+    if (isMissingOrPlaceholder(mapping.portalId)) {
+      errors.push(`${label} is missing portalId`);
+    }
+
+    if (isMissingOrPlaceholder(mapping.projectId)) {
+      errors.push(`${label} is missing projectId`);
+    }
+
+    if (!mapping.cliqUserZohoId && !mapping.cliqUserEmail) {
+      errors.push(`${label} must include cliqUserZohoId or cliqUserEmail`);
+    }
+
+    if (mapping.cliqUserZohoId && mapping.cliqUserEmail) {
+      errors.push(`${label} must include only one of cliqUserZohoId or cliqUserEmail`);
+    }
+
+    const key = `${mapping.portalId}:${mapping.projectId}`;
+    if (seen.has(key)) {
+      errors.push(`${label} duplicates project mapping for ${key}`);
+    }
+    seen.add(key);
+  }
+
+  return errors;
+}
+
+function validateScheduleTimes(scheduleTimes) {
+  const errors = [];
+  const seen = new Set();
+
+  for (const scheduleTime of scheduleTimes) {
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(scheduleTime)) {
+      errors.push(`${scheduleTime} must use 24-hour HH:MM format`);
+      continue;
+    }
+
+    if (seen.has(scheduleTime)) {
+      errors.push(`${scheduleTime} is duplicated`);
+    }
+
+    seen.add(scheduleTime);
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid schedule time configuration: ${errors.join("; ")}`);
+  }
 }
 
 function validateProjectBoards(projectBoards) {

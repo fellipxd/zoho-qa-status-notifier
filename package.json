@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "check": "node src/check-once.js",
-    "test-config": "node src/test-config.js"
+    "test-config": "node src/test-config.js",
+    "list-projects": "node src/list-projects.js"
   },
   "keywords": [
     "zoho",

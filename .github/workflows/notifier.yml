@@ -1,0 +1,72 @@
+name: Zoho QA Status Notifier
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+    - cron: "30 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: zoho-qa-status-notifier
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    env:
+      ZOHO_ACCOUNTS_BASE_URL: ${{ vars.ZOHO_ACCOUNTS_BASE_URL || 'https://accounts.zoho.com' }}
+      ZOHO_PROJECTS_BASE_URL: ${{ vars.ZOHO_PROJECTS_BASE_URL || 'https://projectsapi.zoho.com/api/v3' }}
+      ZOHO_CLIENT_ID: ${{ secrets.ZOHO_CLIENT_ID }}
+      ZOHO_CLIENT_SECRET: ${{ secrets.ZOHO_CLIENT_SECRET }}
+      ZOHO_REFRESH_TOKEN: ${{ secrets.ZOHO_REFRESH_TOKEN }}
+      ZOHO_PORTAL_ID: ${{ vars.ZOHO_PORTAL_ID }}
+      ZOHO_PORTAL_IDS: ${{ vars.ZOHO_PORTAL_IDS }}
+      MONITOR_ALL_PROJECTS: ${{ vars.MONITOR_ALL_PROJECTS || 'true' }}
+      ZOHO_PROJECT_IDS: ${{ vars.ZOHO_PROJECT_IDS }}
+      ZOHO_PROJECT_NAMES: ${{ vars.ZOHO_PROJECT_NAMES }}
+      ZOHO_PROJECTS: ${{ vars.ZOHO_PROJECTS }}
+      TARGET_STATUS_NAMES: ${{ vars.TARGET_STATUS_NAMES || 'QA' }}
+      TARGET_STATUS_NAME: ${{ vars.TARGET_STATUS_NAME }}
+      PROJECT_CLIQ_MENTIONS: ${{ vars.PROJECT_CLIQ_MENTIONS }}
+      CLIQ_WEBHOOK_URL: ${{ secrets.CLIQ_WEBHOOK_URL }}
+      NOTIFIED_STATE_FILE: .github/notifier-state/notified.json
+      DEBUG_TASKS: ${{ vars.DEBUG_TASKS || 'false' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Ensure notifier state file exists
+        run: |
+          mkdir -p .github/notifier-state
+          if [ ! -f .github/notifier-state/notified.json ]; then
+            printf '{\n  "notified": {},\n  "lastSeenStatusByTask": {}\n}\n' > .github/notifier-state/notified.json
+          fi
+
+      - name: Run notifier check
+        run: npm run check
+
+      - name: Commit updated notifier state
+        run: |
+          if git diff --quiet -- .github/notifier-state/notified.json; then
+            echo "No notifier state changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/notifier-state/notified.json
+          git commit -m "chore: update notifier state"
+          git push

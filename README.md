@@ -47,10 +47,19 @@ ZOHO_REFRESH_TOKEN=your_refresh_token
 ZOHO_PORTAL_ID=your_portal_id
 MONITOR_ALL_PROJECTS=true
 TARGET_STATUS_NAMES=QA,UAT,Ready for Release
-POLL_INTERVAL_MINUTES=5
+SCHEDULE_TIMES=09:00,16:30
+SCHEDULE_TIMEZONE=Africa/Lagos
 CLIQ_WEBHOOK_URL=https://cliq.zoho.com/api/v2/channelsbyname/your-channel/message?zapikey=your_token
 NOTIFIED_STATE_FILE=./data/notified.json
 DEBUG_TASKS=false
+```
+
+`SCHEDULE_TIMES` uses 24-hour `HH:MM` values separated by commas. When `SCHEDULE_TIMES` is set, the notifier runs only at those daily times in `SCHEDULE_TIMEZONE`.
+
+If you prefer interval polling instead, leave `SCHEDULE_TIMES` blank and use:
+
+```env
+POLL_INTERVAL_MINUTES=5
 ```
 
 With `MONITOR_ALL_PROJECTS=true`, the service discovers all accessible projects in `ZOHO_PORTAL_ID` and checks every discovered project each run.
@@ -131,6 +140,32 @@ This checks:
 4. Zoho Projects task read access works for every resolved board.
 5. Zoho Cliq webhook posting works.
 
+## 4a. List all projects
+
+Run:
+
+```bash
+npm run list-projects
+```
+
+This prints every resolved project with its `portalId`, `projectId`, and `name`. Use those IDs when creating per-project Cliq mention mappings.
+
+## 4b. Attach a Cliq user to a project
+
+Add `PROJECT_CLIQ_MENTIONS` in `.env` as JSON:
+
+```env
+PROJECT_CLIQ_MENTIONS=[{"portalId":"915071504","projectId":"2637801000000347665","cliqUserEmail":"qa.lead@yourcompany.com"},{"portalId":"915071504","projectId":"2637801000000380006","cliqUserZohoId":"60040396507"}]
+```
+
+Each mapping must include:
+
+- `portalId`
+- `projectId`
+- exactly one of `cliqUserEmail` or `cliqUserZohoId`
+
+When a task in that project enters one of the configured statuses, the notifier prefixes the Cliq message with that user's mention.
+
 ## 5. Run one check manually
 
 ```bash
@@ -139,13 +174,17 @@ npm run check
 
 This fetches tasks once from every configured or discovered board and sends notifications for any task currently in `TARGET_STATUS_NAMES` that has not already been notified.
 
+If no new matching tasks are found for the whole run, it sends a quiet heartbeat message to Cliq instead.
+
 ## 6. Run continuously
 
 ```bash
 npm start
 ```
 
-The notifier will run immediately, then repeat every `POLL_INTERVAL_MINUTES` minutes.
+If `SCHEDULE_TIMES` is set, the notifier will run at those daily times in `SCHEDULE_TIMEZONE`.
+
+If `SCHEDULE_TIMES` is not set, the notifier will run immediately, then repeat every `POLL_INTERVAL_MINUTES` minutes.
 
 ## Duplicate notification rule
 
@@ -161,7 +200,9 @@ It sends only once for each:
 portalId + projectId + taskId + statusName
 ```
 
-So a task already in `QA` will not spam the Cliq channel every 5 minutes, but that same task can still notify separately if it later matches another configured status such as `UAT`. Two boards with the same task ID do not suppress each other.
+So a task already in `QA` will not spam the Cliq channel on repeated scheduled checks, but that same task can still notify separately if it later matches another configured status such as `UAT`. Two boards with the same task ID do not suppress each other.
+
+When a run sends `0` new notifications, the notifier posts a heartbeat summary to Cliq so the channel still shows that the check ran successfully.
 
 ## Debugging task status fields
 
@@ -200,6 +241,39 @@ pm2 start src/index.js --name zoho-qa-status-notifier
 pm2 save
 pm2 startup
 ```
+
+## Deployment option: GitHub Actions
+
+This repo includes [`.github/workflows/notifier.yml`](/mnt/c/Users/phili/Desktop/pandora/zoho-qa-status-notifier/zoho-qa-status-notifier/.github/workflows/notifier.yml), which runs:
+
+- At `08:00 UTC` daily
+- At `15:30 UTC` daily
+- Manually through `workflow_dispatch`
+
+Those UTC times match `09:00` and `16:30` in `Africa/Lagos`.
+
+Set these GitHub repository secrets:
+
+- `ZOHO_CLIENT_ID`
+- `ZOHO_CLIENT_SECRET`
+- `ZOHO_REFRESH_TOKEN`
+- `CLIQ_WEBHOOK_URL`
+
+Set these GitHub repository variables as needed:
+
+- `ZOHO_PORTAL_ID` or `ZOHO_PORTAL_IDS`
+- `MONITOR_ALL_PROJECTS`
+- `ZOHO_PROJECT_IDS`
+- `ZOHO_PROJECT_NAMES`
+- `ZOHO_PROJECTS`
+- `TARGET_STATUS_NAMES`
+- `TARGET_STATUS_NAME`
+- `PROJECT_CLIQ_MENTIONS`
+- `DEBUG_TASKS`
+- `ZOHO_ACCOUNTS_BASE_URL` if not using `https://accounts.zoho.com`
+- `ZOHO_PROJECTS_BASE_URL` if not using `https://projectsapi.zoho.com/api/v3`
+
+The workflow stores duplicate-notification state in [`.github/notifier-state/notified.json`](/mnt/c/Users/phili/Desktop/pandora/zoho-qa-status-notifier/zoho-qa-status-notifier/.github/notifier-state/notified.json) and commits updates back to the repository after each run.
 
 ## Production recommendation
 

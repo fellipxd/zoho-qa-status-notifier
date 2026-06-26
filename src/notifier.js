@@ -1,4 +1,4 @@
-import { sendCliqNotification } from "./cliq-client.js";
+import { sendCliqHeartbeat, sendCliqNotification } from "./cliq-client.js";
 import { loadState, saveState } from "./state-store.js";
 import { getAccessToken, fetchAllTasks } from "./zoho-projects-client.js";
 import { getStatusName, getTaskId, getTaskName, taskSummary } from "./task-normalizer.js";
@@ -93,11 +93,22 @@ export async function runNotifierCheck(config) {
         notifiedAt: new Date().toISOString()
       };
 
+      saveState(config.notifiedStateFile, state);
+
       notificationsSent += 1;
     }
   }
 
   saveState(config.notifiedStateFile, state);
+
+  if (notificationsSent === 0) {
+    await sendCliqHeartbeat(config, {
+      boardsChecked: taskGroups.length,
+      tasksFetched,
+      targetStatusTaskCount,
+      targetStatusNames: config.targetStatusNames
+    });
+  }
 
   console.log(
     `[${new Date().toISOString()}] Done. Checked ${taskGroups.length} board(s), fetched ${tasksFetched} task(s), found ${targetStatusTaskCount} task(s) in ${formatStatusList(config.targetStatusNames)}, sent ${notificationsSent} notification(s).`
