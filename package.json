@@ -1,0 +1,29 @@
+{
+  "name": "zoho-qa-status-notifier",
+  "version": "1.0.0",
+  "description": "Poll Zoho Projects tasks and notify Zoho Cliq when tasks enter a configured QA status without using Zoho Projects workflows.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node src/check-once.js",
+    "test-config": "node src/test-config.js"
+  },
+  "keywords": [
+    "zoho",
+    "zoho-projects",
+    "zoho-cliq",
+    "qa",
+    "automation"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
