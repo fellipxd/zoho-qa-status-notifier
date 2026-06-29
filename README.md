@@ -174,6 +174,8 @@ npm run check
 
 This fetches tasks once from every configured or discovered board and sends notifications for any task currently in `TARGET_STATUS_NAMES` that has not already been notified.
 
+Notifications are batched per project. If a project has `10` or fewer new matching tasks, the Cliq message lists them. If a project has more than `10`, the message shows the total count and a status breakdown instead of listing every task.
+
 If no new matching tasks are found for the whole run, it sends a quiet heartbeat message to Cliq instead.
 
 ## 6. Run continuously
