@@ -1,17 +1,16 @@
 # Zoho QA Status Notifier
 
-Polls one or more Zoho Projects boards/projects and sends a Zoho Cliq message when a task enters a configured status, for example `QA`, without using Zoho Projects Workflows.
+Automates QA workflows across Zoho Projects and Zoho Cliq. Polls Zoho Projects boards/tasks and sends Zoho Cliq notifications when tasks enter a configured status, creates QA tickets from DEV-board tasks, and assigns owners based on project tags — all without using Zoho Projects Workflows.
 
 ## What this does
 
-```text
-Zoho Projects API
-  -> scheduled Node.js poller
-  -> optionally discovers all projects in the configured portal(s)
-  -> detects task.status in TARGET_STATUS_NAMES
-  -> sends Zoho Cliq webhook message
-  -> stores notification state to prevent duplicates
-```
+**Notifier:** Polls Zoho Projects tasks and posts a Zoho Cliq message when a task enters a target status (e.g., `QA`, `Testing`) — once per status per task, with duplicate suppression.
+
+**QA ticket creation:** Migrates DEV-board tasks in `Testing` or `Pushed To QA` status to a dedicated QA TASK BOARD, preserving task details, tags, and source links for traceability.
+
+**Owner assignment:** Resolves each QA ticket's owner from a project-tag-to-email mapping (`PROJECT_CLIQ_MENTIONS`), keeping ownership in sync as project mappings change.
+
+All three can run on a scheduled interval (e.g., daily at 09:00 / 16:30) via GitHub Actions, or on-demand locally.
 
 ## Requirements
 
