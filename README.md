@@ -166,6 +166,16 @@ Each mapping must include:
 
 When a task in that project enters one of the configured statuses, the notifier prefixes the Cliq message with that user's mention.
 
+An optional `tag` field on a mapping also lets the [QA dev-board task creation script](#assigning-an-owner-to-each-new-qa-ticket) assign that same person as the owner of any migrated QA task whose source task carries a matching project tag.
+
+For a long list of mappings, keeping everything on one `PROJECT_CLIQ_MENTIONS` line gets hard to read and edit. Put it in its own formatted JSON file instead and point to it:
+
+```env
+PROJECT_CLIQ_MENTIONS_FILE=./project-cliq-mentions.json
+```
+
+See `project-cliq-mentions.example.json` for the format — same shape as the inline JSON array, just multi-line. `PROJECT_CLIQ_MENTIONS_FILE` takes precedence over `PROJECT_CLIQ_MENTIONS` when both are set. Keep the file out of version control (it holds real emails/IDs), the same as `.env`.
+
 ## 5. Run one check manually
 
 ```bash
@@ -177,6 +187,88 @@ This fetches tasks once from every configured or discovered board and sends noti
 Notifications are batched per project. If a project has `10` or fewer new matching tasks, the Cliq message lists them. If a project has more than `10`, the message shows the total count and a status breakdown instead of listing every task.
 
 If no new matching tasks are found for the whole run, it sends a quiet heartbeat message to Cliq instead.
+
+## 5a. One-time QA dev-board task creation
+
+Run the manual migration script when you want to create QA-board tickets from DEV-board tasks in `Testing` or `Pushed To QA` status:
+
+```bash
+npm run create-qa-dev-tasks
+```
+
+By default this is a dry run. It checks `FRONTEND TASK BOARD` and `BACKEND TASK BOARD`, selects one matching task from each board, and reports what would be created on `QA TASK BOARD` under `Task from DEV Board`.
+
+To create only the first matching frontend task and first matching backend task for verification:
+
+```bash
+npm run create-qa-dev-tasks -- --execute
+```
+
+After those two are verified, create the remaining matching tasks:
+
+```bash
+npm run create-qa-dev-tasks -- --execute --all
+```
+
+The script creates each QA ticket with the original task name, a rich description containing the source task details, and the original tag IDs. It also adds the origin tag `FRONTEND` or `BACKEND`. It skips tasks already present on the QA board by checking source metadata written by this script and existing QA task names, source IDs, and source prefixes.
+
+The description no longer includes a full raw JSON snapshot of the source task by default (it was mostly noise). Pass `--include-raw-json` if you need it back for a specific run.
+
+### Assigning an owner to each new QA ticket
+
+Each DEV-board task carries a project tag (for example `WDS`, `TRADEX`, `COTEX2.0`) identifying which client project it belongs to. The script resolves that tag to an owner using the `tag` field on your existing `PROJECT_CLIQ_MENTIONS` entries, and assigns the matched person as the new QA task's owner (in addition to their existing use as the Cliq mention target):
+
+```env
+PROJECT_CLIQ_MENTIONS=[{"portalId":"915071504","projectId":"2637801000000182317","name":"Wells and Drilling Services (WDS)","tag":"WDS","cliqUserEmail":"chisom.okpalaeke@brandonetech.com"}]
+```
+
+Add a `tag` value to each entry that should drive QA task ownership; entries without a `tag` are ignored for this purpose. Since the same project is often tagged inconsistently on DEV-board tasks (typos, renames, a `PORTAL`/`2.0` suffix sometimes added), `tag` also accepts a comma-separated list or a JSON array so one entry can cover every spelling in use, e.g. `"tag":"AGS,AGS PORTAL,AGS STAGING"`. If a task's tags don't match any configured `tag`, it falls back to:
+
+```env
+QA_DEV_DEFAULT_OWNER_EMAIL=qa.lead@brandonetech.com
+```
+
+If a task matches more than one `tag` mapped to *different* owners, the script logs a warning and creates the task unassigned rather than guessing. If an owner's email isn't found among the QA board's members, or two `PROJECT_CLIQ_MENTIONS` entries map the same `tag` to different emails, the script also warns/errors accordingly instead of silently assigning the wrong person.
+
+Resolving an email to a Zoho user requires reading the QA board's member list, which needs `ZohoProjects.users.READ` on the refresh token. If that scope is missing, the script logs a warning once and creates every task unassigned instead of failing the whole run.
+
+Optional overrides:
+
+```env
+QA_DEV_QA_PROJECT_ID=2637801000000246021
+QA_DEV_TASKLIST_ID=2637801000000468022
+QA_DEV_FRONTEND_PROJECT_ID=2637801000000347082
+QA_DEV_BACKEND_PROJECT_ID=2637801000000347665
+QA_DEV_FRONTEND_TAG_ID=existing_frontend_tag_id
+QA_DEV_BACKEND_TAG_ID=existing_backend_tag_id
+QA_DEV_DEFAULT_OWNER_EMAIL=qa.lead@brandonetech.com
+```
+
+The refresh token needs `ZohoProjects.projects.READ`, `ZohoProjects.tasks.READ`, and `ZohoProjects.tasks.CREATE`. If the `FRONTEND` or `BACKEND` tag does not already exist, it also needs `ZohoProjects.tags.CREATE`, or you can set `QA_DEV_FRONTEND_TAG_ID` / `QA_DEV_BACKEND_TAG_ID` to existing tag IDs. To assign owners, it also needs `ZohoProjects.users.READ`.
+
+## 5b. Backfill or resync owners on already-created QA tickets
+
+Use this any time you want existing QA tickets to match your current `PROJECT_CLIQ_MENTIONS` tag mapping — whether that's backfilling owners on tickets created before owner assignment existed, or picking up a change you just made to `cliqUserEmail` for a project. It keeps the board's owners in sync with the mapping: unassigned tickets get assigned, and tickets whose current owner doesn't match the mapping get reassigned. A ticket already showing the correct owner is left untouched (no-op), so it's safe to run repeatedly.
+
+```bash
+npm run assign-qa-task-owners
+```
+
+By default this is a dry run scoped to the `Task from DEV Board` task list on `QA TASK BOARD`. To apply it for real:
+
+```bash
+npm run assign-qa-task-owners -- --execute
+```
+
+Useful flags:
+
+- `--limit=N` — only update the first `N` tasks that need a change, to spot-check before running against everything.
+- `--skip-assigned` — don't touch a task that already has a different owner set; only fill in ones that are currently unassigned. Use this if you want to preserve owners set manually and only rely on the mapping for new/blank tickets.
+- `--all-tasklists` — scan every task list on the QA board instead of just `Task from DEV Board`.
+
+It resolves each existing ticket's owner from its own tags (the tags were copied over when the ticket was created), so no source-board lookup is needed. Tasks with no matching tag, an unresolved owner email, or tags that match more than one owner are left untouched and logged, the same as during creation.
+
+This needs the same `ZohoProjects.users.READ` scope as owner assignment during creation, plus a scope that allows updating a task's owner (`ZohoProjects.tasks.UPDATE`, or whatever your account calls it) — Zoho's exact update endpoint isn't documented consistently across accounts, so the script tries a couple of HTTP methods automatically and reports if none of them work.
 
 ## 6. Run continuously
 
@@ -246,19 +338,18 @@ pm2 startup
 
 ## Deployment option: GitHub Actions
 
-This repo includes [`.github/workflows/notifier.yml`](/mnt/c/Users/phili/Desktop/pandora/zoho-qa-status-notifier/zoho-qa-status-notifier/.github/workflows/notifier.yml), which runs:
+This repo includes [`.github/workflows/notifier.yml`](/mnt/c/Users/phili/Desktop/pandora/zoho-qa-status-notifier/zoho-qa-status-notifier/.github/workflows/notifier.yml), which runs, at `08:00 UTC` and `15:30 UTC` daily (matching `09:00`/`16:30` `Africa/Lagos`) and on manual `workflow_dispatch`:
 
-- At `08:00 UTC` daily
-- At `15:30 UTC` daily
-- Manually through `workflow_dispatch`
+1. **The Cliq status notifier** (`npm run check`) — same as running it locally.
+2. **The QA dev-board task creation script** (`npm run create-qa-dev-tasks -- --execute --all`) — creates QA tickets for every newly-qualifying DEV-board task, every run. This is safe to run unattended and repeatedly: the script treats QA TASK BOARD itself as the source of truth for what's already been migrated, so it only ever creates tickets for tasks it hasn't seen before. It does **not** run in the safer "verify one task first" mode you'd use locally — there's no human in the loop to check a single result before it processes everything, so make sure you've already verified the script's behavior locally (dry run, then `--execute` on one task per board) before turning this on.
 
-Those UTC times match `09:00` and `16:30` in `Africa/Lagos`.
+If you only want the Cliq notifications automated and not ticket creation, remove the "Create QA tickets from DEV-board tasks" step from the workflow.
 
 Set these GitHub repository secrets:
 
 - `ZOHO_CLIENT_ID`
 - `ZOHO_CLIENT_SECRET`
-- `ZOHO_REFRESH_TOKEN`
+- `ZOHO_REFRESH_TOKEN` — needs every scope both scripts use: `ZohoProjects.projects.READ`, `ZohoProjects.tasks.READ`, `ZohoProjects.tasks.CREATE`, `ZohoProjects.tags.CREATE` (unless you set `QA_DEV_FRONTEND_TAG_ID`/`QA_DEV_BACKEND_TAG_ID`), and `ZohoProjects.users.READ` if you want QA task owners assigned automatically.
 - `CLIQ_WEBHOOK_URL`
 
 Set these GitHub repository variables as needed:
@@ -270,12 +361,13 @@ Set these GitHub repository variables as needed:
 - `ZOHO_PROJECTS`
 - `TARGET_STATUS_NAMES`
 - `TARGET_STATUS_NAME`
-- `PROJECT_CLIQ_MENTIONS`
+- `PROJECT_CLIQ_MENTIONS` — the workflow only reads this inline variable, not `PROJECT_CLIQ_MENTIONS_FILE` (that file is gitignored and never reaches the runner). Paste the full contents of your local `project-cliq-mentions.json` in here as this variable's value — GitHub Actions variables aren't limited to one line the way `.env`/dotenv is, so the same multi-line JSON works unchanged. Keep this variable updated whenever you edit `project-cliq-mentions.json` locally, or the automated ticket creation won't assign the owners you've configured.
+- `QA_DEV_DEFAULT_OWNER_EMAIL`
 - `DEBUG_TASKS`
 - `ZOHO_ACCOUNTS_BASE_URL` if not using `https://accounts.zoho.com`
 - `ZOHO_PROJECTS_BASE_URL` if not using `https://projectsapi.zoho.com/api/v3`
 
-The workflow stores duplicate-notification state in [`.github/notifier-state/notified.json`](/mnt/c/Users/phili/Desktop/pandora/zoho-qa-status-notifier/zoho-qa-status-notifier/.github/notifier-state/notified.json) and commits updates back to the repository after each run.
+The workflow stores duplicate-notification state in [`.github/notifier-state/notified.json`](/mnt/c/Users/phili/Desktop/pandora/zoho-qa-status-notifier/zoho-qa-status-notifier/.github/notifier-state/notified.json) and commits updates back to the repository after each run. That commit step always runs (even if QA ticket creation fails) so a problem creating tickets never blocks the notifier's own duplicate-suppression state from being saved.
 
 ## Production recommendation
 

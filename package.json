@@ -8,7 +8,9 @@
     "start": "node src/index.js",
     "check": "node src/check-once.js",
     "test-config": "node src/test-config.js",
-    "list-projects": "node src/list-projects.js"
+    "list-projects": "node src/list-projects.js",
+    "create-qa-dev-tasks": "node src/create-qa-dev-board-tasks.js",
+    "assign-qa-task-owners": "node src/assign-qa-task-owners.js"
   },
   "keywords": [
     "zoho",

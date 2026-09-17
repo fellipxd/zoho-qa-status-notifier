@@ -1,0 +1,15 @@
+[
+  {
+    "portalId": "replace_with_portal_id",
+    "projectId": "replace_with_project_id_1",
+    "name": "Board One",
+    "cliqUserEmail": "qa.lead@yourcompany.com",
+    "tag": "BOARD1,B1 PORTAL"
+  },
+  {
+    "portalId": "replace_with_portal_id",
+    "projectId": "replace_with_project_id_2",
+    "name": "Board Two",
+    "cliqUserZohoId": "60040396507"
+  }
+]

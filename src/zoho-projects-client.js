@@ -133,6 +133,51 @@ export async function fetchAllProjectsForPortal(config, accessToken, portalId) {
   return projects;
 }
 
+export async function fetchProjectUsers(config, accessToken, board) {
+  const url = `${config.zohoProjectsBaseUrl}/portal/${board.portalId}/projects/${board.projectId}/users`;
+
+  const response = await axios.get(url, {
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`
+    },
+    timeout: 30000
+  });
+
+  const body = response.data || {};
+  const users = body.users || body.data || [];
+  const normalizedUsers = Array.isArray(users) ? users : [users].filter(Boolean);
+
+  return normalizedUsers.map(normalizeProjectUser).filter((user) => user.id);
+}
+
+export async function updateTaskOwner(config, accessToken, board, taskId, ownerId) {
+  const url = `${config.zohoProjectsBaseUrl}/portal/${board.portalId}/projects/${board.projectId}/tasks/${taskId}`;
+
+  // Confirmed against the live API: PATCH with a bare `owners: [{ id }]` (or PUT/POST at all)
+  // returns 200 but silently does nothing. Only `owners_and_work.owners[].zpuid` via PATCH actually assigns the owner.
+  const response = await axios.patch(
+    url,
+    { owners_and_work: { owners: [{ zpuid: ownerId }] } },
+    {
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      timeout: 30000
+    }
+  );
+
+  return response.data?.task || response.data?.data?.[0] || response.data?.data || response.data || {};
+}
+
+function normalizeProjectUser(user) {
+  return {
+    id: String(user.id || user.zpuid || user.user_id || "").trim(),
+    name: String(user.name || user.full_name || user.email || "").trim(),
+    email: String(user.email || "").trim().toLowerCase()
+  };
+}
+
 function extractProjects(body) {
   const candidates = [
     body,

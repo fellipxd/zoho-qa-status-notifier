@@ -1,4 +1,6 @@
 import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 
 dotenv.config();
 
@@ -159,25 +161,37 @@ export function parseScheduleTimes(env) {
 }
 
 export function parseProjectCliqMentions(env) {
-  const raw = env.PROJECT_CLIQ_MENTIONS;
+  const filePath = env.PROJECT_CLIQ_MENTIONS_FILE;
+  const raw = filePath ? readProjectCliqMentionsFile(filePath) : env.PROJECT_CLIQ_MENTIONS;
 
   if (!raw) {
     return [];
   }
 
+  const source = filePath ? `PROJECT_CLIQ_MENTIONS_FILE (${filePath})` : "PROJECT_CLIQ_MENTIONS";
   let parsed;
 
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`PROJECT_CLIQ_MENTIONS must be valid JSON: ${error.message}`);
+    throw new Error(`${source} must be valid JSON: ${error.message}`);
   }
 
   if (!Array.isArray(parsed)) {
-    throw new Error("PROJECT_CLIQ_MENTIONS must be a JSON array.");
+    throw new Error(`${source} must be a JSON array.`);
   }
 
   return parsed.map((entry, index) => normalizeProjectCliqMention(entry, index));
+}
+
+function readProjectCliqMentionsFile(filePath) {
+  const resolvedPath = path.resolve(process.cwd(), filePath);
+
+  try {
+    return fs.readFileSync(resolvedPath, "utf8");
+  } catch (error) {
+    throw new Error(`Could not read PROJECT_CLIQ_MENTIONS_FILE at "${resolvedPath}": ${error.message}`);
+  }
 }
 
 function normalizeProjectBoard(board, index) {
@@ -197,14 +211,21 @@ function normalizeProjectCliqMention(entry, index) {
   const projectId = String(entry.projectId || entry.project_id || entry.id || "").trim();
   const cliqUserZohoId = String(entry.cliqUserZohoId || entry.zohoId || entry.userZohoId || "").trim();
   const cliqUserEmail = String(entry.cliqUserEmail || entry.email || entry.userEmail || "").trim();
+  const tags = normalizeMentionTags(entry.tag ?? entry.tags ?? entry.projectTag ?? entry.projectTags);
 
   return {
     portalId,
     projectId,
     cliqUserZohoId,
     cliqUserEmail,
+    tags,
     label: String(entry.label || entry.name || `mapping ${index + 1}`).trim()
   };
+}
+
+function normalizeMentionTags(rawTags) {
+  const values = Array.isArray(rawTags) ? rawTags : String(rawTags || "").split(",");
+  return [...new Set(values.map((tag) => String(tag).trim()).filter(Boolean))];
 }
 
 function validateDiscoveryPortalIds(portalIds) {
@@ -267,28 +288,33 @@ function validateProjectCliqMentions(projectCliqMentions) {
 
   for (const mapping of projectCliqMentions) {
     const label = mapping.label || `${mapping.portalId}:${mapping.projectId}`;
+    const hasPortalId = !isMissingOrPlaceholder(mapping.portalId);
+    const hasProjectId = !isMissingOrPlaceholder(mapping.projectId);
+    const isTagOnly = mapping.tags.length > 0 && !hasPortalId && !hasProjectId;
 
-    if (isMissingOrPlaceholder(mapping.portalId)) {
-      errors.push(`${label} is missing portalId`);
-    }
+    if (!isTagOnly) {
+      if (!hasPortalId) {
+        errors.push(`${label} is missing portalId`);
+      }
 
-    if (isMissingOrPlaceholder(mapping.projectId)) {
-      errors.push(`${label} is missing projectId`);
-    }
-
-    if (!mapping.cliqUserZohoId && !mapping.cliqUserEmail) {
-      errors.push(`${label} must include cliqUserZohoId or cliqUserEmail`);
+      if (!hasProjectId) {
+        errors.push(`${label} is missing projectId`);
+      }
     }
 
     if (mapping.cliqUserZohoId && mapping.cliqUserEmail) {
       errors.push(`${label} must include only one of cliqUserZohoId or cliqUserEmail`);
     }
 
-    const key = `${mapping.portalId}:${mapping.projectId}`;
-    if (seen.has(key)) {
-      errors.push(`${label} duplicates project mapping for ${key}`);
+    if (hasPortalId && hasProjectId) {
+      const key = `${mapping.portalId}:${mapping.projectId}`;
+
+      if (seen.has(key)) {
+        errors.push(`${label} duplicates project mapping for ${key}`);
+      }
+
+      seen.add(key);
     }
-    seen.add(key);
   }
 
   return errors;
